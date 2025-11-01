@@ -89,7 +89,7 @@ def get_recommendations():
 # --- 5. Add a Home Route ---
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "StreamHub ML Service (Genre-Based) is running"})
+    return jsonify({"message": "✅ StreamHub ML Service (Genre-Based) is running"})
 
 # --- 6. Run the App ---
 if __name__ == '__main__':
