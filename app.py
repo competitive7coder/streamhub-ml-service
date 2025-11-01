@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import os # Added for port binding
+import gunicorn  # Ensure gunicorn is imported if needed, though it's used by the command
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -94,6 +94,5 @@ def home():
 # --- 6. Run the App ---
 if __name__ == '__main__':
     # This part is for local development, Gunicorn runs the 'app' variable directly on Render
-    # Get the port from the environment, defaulting to 5001 for local
-    port = int(os.environ.get("PORT", 5001))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(port=5001, debug=True)
+
