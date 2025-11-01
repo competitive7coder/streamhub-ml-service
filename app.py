@@ -2,12 +2,11 @@ import pandas as pd
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import gunicorn  # Ensure gunicorn is imported if needed, though it's used by the command
+# --- CHANGE: Use linear_kernel for memory efficiency ---
+from sklearn.metrics.pairwise import linear_kernel 
 
 # Initialize the Flask app
 app = Flask(__name__)
-# Allow cross-origin requests (from your Node.js server)
 CORS(app) 
 
 # --- 1. Load Data and Build ML Model (This runs once at startup) ---
@@ -20,19 +19,16 @@ except Exception as e:
     print(f"Error loading movies.csv: {e}")
     movies_df = pd.DataFrame(columns=['id', 'title', 'genres']) # Empty dataframe on error
 
-# Replace empty genres with a placeholder
 movies_df['genres'] = movies_df['genres'].fillna('')
 
-# Create a "bag of words" for the genres (e.g., "Drama;Crime" -> ["Drama", "Crime"])
-# This is the model that matches your movies.csv
+# The Vectorizer is kept, as it's small and necessary
 vectorizer = CountVectorizer(tokenizer=lambda x: x.split(';'))
+# genre_matrix is a Sparse Matrix, which is memory-efficient
 genre_matrix = vectorizer.fit_transform(movies_df['genres'])
 
-# Calculate the similarity between all movies based on their genres
-cosine_sim = cosine_similarity(genre_matrix, genre_matrix)
+# --- IMPORTANT: The full cosine_sim matrix is NOT calculated here. ---
 
 # Create a helper series to map movie IDs to their index in the dataframe
-# This is crucial for fast lookups
 indices = pd.Series(movies_df.index, index=movies_df['id']).astype(int)
 
 print("Model built successfully.")
@@ -40,17 +36,16 @@ print("Model built successfully.")
 # --- 2. Create the Recommendation API Endpoint ---
 @app.route('/recommend', methods=['POST'])
 def get_recommendations():
-    # Get the list of movie IDs from the request body
     data = request.get_json()
     if not data or 'watchlist_ids' not in data:
         return jsonify({'error': 'Missing watchlist_ids in request body'}), 400
     
     watchlist_ids = data['watchlist_ids']
     
-    # --- 3. The ML Logic: Build User's "Taste Profile" ---
+    # --- 3. The ML Logic: Build User's "Taste Profile" (REVISED FOR MEMORY) ---
     
     try:
-        # We check if the movie_id exists in our 'indices' map before trying to use it.
+        # Get the dataframe indices for the movies in the user's watchlist
         watchlist_indices = [indices[int(movie_id)] for movie_id in watchlist_ids if int(movie_id) in indices]
         
     except Exception as e:
@@ -58,18 +53,28 @@ def get_recommendations():
         return jsonify({'error': f'Error finding indices: {e}'}), 500
 
     if not watchlist_indices:
-        # If watchlist is empty or has movies not in our dataset, return an empty list
         print(f"Watchlist IDs {watchlist_ids} had no matches in the local movie data.")
         return jsonify({'recommendations': []})
 
-    # Get the genre similarity scores for all movies in the watchlist
-    sim_scores = cosine_sim[watchlist_indices].mean(axis=0)
+    # Get the *sparse* genre vectors for all movies in the watchlist
+    watchlist_vectors = genre_matrix[watchlist_indices]
+
+    # Calculate the mean (average) vector. This is the user's taste profile.
+    # We explicitly convert the result to a dense array for the next step
+    user_profile_vector = watchlist_vectors.mean(axis=0).A 
+
+    # Calculate Similarity between the single user_profile_vector and ALL movie vectors.
+    # linear_kernel is ideal for this sparse-to-dense calculation.
+    sim_scores = linear_kernel(user_profile_vector, genre_matrix)
+    
+    # The result is a 1xN array, so we take the first row
+    sim_scores = sim_scores[0] 
 
     # Sort the movies based on the similarity scores
     sim_scores = sorted(list(enumerate(sim_scores)), key=lambda x: x[1], reverse=True)
 
-    # Get the scores of the 20 most similar movies
-    sim_scores = sim_scores[1:21] # Get top 20 (skip the first one, which is 1.0)
+    # Get the scores of the 20 most similar movies (skip the first one, which is the profile itself)
+    sim_scores = sim_scores[1:21] 
 
     # Get the movie indices from the scores
     movie_indices = [i[0] for i in sim_scores]
@@ -93,6 +98,5 @@ def home():
 
 # --- 6. Run the App ---
 if __name__ == '__main__':
-    # This part is for local development, Gunicorn runs the 'app' variable directly on Render
-    app.run(port=5001, debug=True)
-
+    # This part is for local development
+    app.run(port=5001)
